@@ -1,4 +1,4 @@
-module memetrader
+module altcointrader
 
 go 1.21
 

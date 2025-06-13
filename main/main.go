@@ -1,6 +1,8 @@
 package main
 
 import (
+	"altcointrader/binance"
+	"context"
 	"fmt"
 	"github.com/xpwu/go-cmd/arg"
 	"github.com/xpwu/go-cmd/cmd"
@@ -15,6 +17,7 @@ func main() {
 		arg.ReadConfig(args)
 		args.Parse()
 		// block
+		binance.SyncDailyKlines(context.Background(), "BTCUSDT")
 		block := make(chan struct{})
 		<-block
 	})

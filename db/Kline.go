@@ -4,7 +4,9 @@ import (
 	"context"
 	"github.com/xpwu/go-db-mongo/mongodb/mongocache"
 	"github.com/xpwu/go-log/log"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 type KlineDocument struct {
@@ -45,4 +47,26 @@ func NewKline(ctx context.Context) *Kline {
 		ctx:    ctx,
 		logger: logger,
 	}
+}
+
+// GetLatestKline 获取指定交易对和周期的最新K线数据
+func (col *Kline) GetLatestKline(interval string) (*KlineDocument, error) {
+	opts := options.FindOne().SetSort(bson.D{{"openTime", -1}})
+	
+	var doc KlineDocument
+	err := col.collection().FindOne(col.ctx, bson.M{
+		"interval": interval,
+		"_id": bson.M{
+			"$regex": "^" + interval,
+		},
+	}, opts).Decode(&doc)
+	
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, nil
+		}
+		return nil, err
+	}
+	
+	return &doc, nil
 }

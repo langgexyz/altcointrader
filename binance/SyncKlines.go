@@ -3,25 +3,59 @@ package binance
 import (
 	"altcointrader/db"
 	"context"
+	"fmt"
 	"github.com/xpwu/go-log/log"
+	"time"
 )
 
 // SyncDailyKlines 同步指定交易对的日K线数据到数据库
+// 会从数据库中查询最新的K线数据，然后同步到当前时间
 // symbol: 交易对名称，例如 "BTCUSDT"
-// limit: 获取的K线数量，最大1000
-func SyncDailyKlines(ctx context.Context, symbol string, limit int) error {
+func SyncDailyKlines(ctx context.Context, symbol string) error {
 	_, logger := log.WithCtx(ctx)
 	logger.PushPrefix("SyncDailyKlines")
 
+	// 创建数据库操作对象
+	klineDB := db.NewKline(ctx)
+
+	// 查询最新的K线数据
+	latestKline, err := klineDB.GetLatestKline("1d")
+	if err != nil {
+		logger.Error("Failed to query latest kline: " + err.Error())
+		return err
+	}
+
+	var startTime int64
+	if latestKline == nil {
+		// 如果没有数据，从一年前开始同步
+		startTime = time.Now().AddDate(-1, 0, 0).UnixMilli()
+		logger.Info("No existing data found, will sync from one year ago")
+	} else {
+		// 从最新数据的下一天开始同步
+		startTime = latestKline.CloseTime + 1
+		logger.Info(fmt.Sprintf("Found latest kline at %d, will sync from %d", latestKline.CloseTime, startTime))
+	}
+
+	// 获取当前时间作为结束时间
+	endTime := time.Now().UnixMilli()
+
+	// 如果开始时间已经超过结束时间，说明数据已经是最新的
+	if startTime >= endTime {
+		logger.Info("Data is already up to date")
+		return nil
+	}
+
 	// 获取K线数据
-	klines, err := GetLines(ctx, symbol, "1d", limit)
+	klines, err := GetLines(ctx, symbol, "1d", startTime, endTime, 0)
 	if err != nil {
 		logger.Error("Failed to get klines: " + err.Error())
 		return err
 	}
 
-	// 创建数据库操作对象
-	klineDB := db.NewKline(ctx)
+	if len(klines) == 0 {
+		logger.Info("No new data to sync")
+		return nil
+	}
 
 	// 批量插入数据
 	for _, kline := range klines {
@@ -31,6 +65,6 @@ func SyncDailyKlines(ctx context.Context, symbol string, limit int) error {
 		}
 	}
 
-	logger.Info("Successfully synced " + symbol + " daily klines")
+	logger.Info(fmt.Sprintf("Successfully synced %d new klines for %s", len(klines), symbol))
 	return nil
 } 
