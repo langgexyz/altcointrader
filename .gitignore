@@ -1,0 +1,4 @@
+.idea/
+bin/go_build_altcointrader_server_main
+bin/error.log
+bin/pid
