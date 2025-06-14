@@ -1,0 +1,13 @@
+{
+	"github.com/xpwu/go-log/log:config": {
+		"// level": "0:DEBUG; 1:INFO; 2:WARNING; 3:ERROR; 4:FATAL",
+		"level": 0
+	},
+	"altcointrader/db:config": {
+		"DBName": "",
+		"uri": "",
+		"user": "",
+		"passwd": "",
+		"maxconn": 0
+	}
+}

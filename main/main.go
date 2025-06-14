@@ -17,7 +17,6 @@ func main() {
 		arg.ReadConfig(args)
 		args.Parse()
 		// block
-		binance.SyncDailyKlines(context.Background(), "BTCUSDT")
 		block := make(chan struct{})
 		<-block
 	})
@@ -37,5 +36,10 @@ func main() {
 		}
 	})
 
+	cmd.RegisterCmd("syncklines", "sync klines", func(args *arg.Arg) {
+		arg.ReadConfig(args)
+		args.Parse()
+		binance.SyncDailyKlines(context.Background(), "DOGEUSDT")
+	})
 	cmd.Run()
 }
