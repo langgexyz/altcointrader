@@ -14,6 +14,7 @@ import (
 // startTime 和 endTime 为毫秒时间戳，如果为0则使用默认值
 // 如果 endTime 为0，则使用当前时间
 // 如果 startTime 为0，则获取最近 limit 条数据
+// https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints
 func GetLines(ctx context.Context, symbol string, interval string, startTime, endTime int64, limit int) (docs []*db.KlineDocument, err error) {
 	_, logger := log.WithCtx(ctx)
 
