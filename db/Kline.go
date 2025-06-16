@@ -10,9 +10,15 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+type KlineInterval = string
+
+const (
+	KlineInterval1D = "1d"
+)
+
 type KlineDocument struct {
 	ID                  string `bson:"_id"`
-	Interval            string
+	Interval            KlineInterval
 	OpenTime            int64   // 开盘时间（毫秒时间戳）
 	Open                float64 // 开盘价
 	High                float64 // 最高价
@@ -25,6 +31,10 @@ type KlineDocument struct {
 	TakerBuyBaseVolume  float64 // 主动买入成交量（基础币）
 	TakerBuyQuoteVolume float64 // 主动买入成交额（计价币）
 	IsOldest            bool    // 是否为历史数据同步的最后一条数据
+}
+
+func (col *Kline) field() *KlineDocument0Field {
+	return NewKlineDocument0Field("")
 }
 
 func (col *Kline) collection() *mongo.Collection {
@@ -42,6 +52,18 @@ func (col *Kline) Insert(doc *KlineDocument) error {
 	return err
 }
 
+func (col *Kline) InsertMany(docs []*KlineDocument) error {
+	if len(docs) == 0 {
+		return nil
+	}
+	interfaceDocs := make([]interface{}, len(docs))
+	for i, doc := range docs {
+		interfaceDocs[i] = doc
+	}
+	_, err := col.collection().InsertMany(col.ctx, interfaceDocs)
+	return err
+}
+
 func NewKline(ctx context.Context) *Kline {
 	_, logger := log.WithCtx(ctx)
 	logger.PushPrefix("Kline")
@@ -51,78 +73,30 @@ func NewKline(ctx context.Context) *Kline {
 	}
 }
 
-// GetOldestKline 获取指定交易对和周期的最早K线数据（IsOldest为true的数据）
-func (col *Kline) GetOldestKline(interval string) (*KlineDocument, error) {
-	var doc KlineDocument
-	err := col.collection().FindOne(col.ctx, bson.M{
-		"interval": interval,
-		"isOldest": true,
-	}).Decode(&doc)
+// GetEarliestKline 获取指定交易对和周期的最早K线数据（按时间排序）
+func (col *Kline) GetEarliestKline(interval KlineInterval) (doc *KlineDocument, err error) {
+	opts := options.FindOne().SetSort(bson.D{{col.field().OpenTime().FullName(), 1}})
 
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, nil
-		}
-		return nil, err
-	}
+	doc = &KlineDocument{}
+	err = col.collection().FindOne(col.ctx, col.field().Interval().Eq(interval).ToBsonD(), opts).Decode(&doc)
 
-	return &doc, nil
+	return doc, err
 }
 
-// UpdateOldestFlag 更新指定交易对和周期的最早数据标记
-func (col *Kline) UpdateOldestFlag(interval string, openTime int64) error {
-	// 先将所有数据标记为非最早
-	_, err := col.collection().UpdateMany(col.ctx, bson.M{
-		"interval": interval,
-		"_id": bson.M{
-			"$regex": "^" + interval,
-		},
-	}, bson.M{
-		"$set": bson.M{"isOldest": false},
-	})
+func (col *Kline) GetOldestKline(interval KlineInterval) (doc *KlineDocument, err error) {
+	opts := options.FindOne().SetSort(bson.D{{col.field().OpenTime().FullName(), -1}})
+
+	doc = &KlineDocument{}
+	err = col.collection().FindOne(col.ctx, col.field().Interval().Eq(interval).ToBsonD(), opts).Decode(&doc)
+	return doc, err
+}
+
+func (col *Kline) SetOldestFlag(id string) (err error) {
+	_, err = col.collection().UpdateOne(col.ctx, col.field().ID().Eq(id).ToBsonD(),
+		col.field().IsOldest().Set(true))
 	if err != nil {
 		return err
 	}
 
-	// 将指定数据标记为最早
-	_, err = col.collection().UpdateOne(col.ctx, bson.M{
-		"interval": interval,
-		"openTime": openTime,
-	}, bson.M{
-		"$set": bson.M{"isOldest": true},
-	})
-	return err
-}
-
-// MarkHistorySynced 标记历史数据同步完成
-func (col *Kline) MarkHistorySynced(interval string) error {
-	_, err := col.collection().UpdateMany(col.ctx, bson.M{
-		"interval": interval,
-		"_id": bson.M{
-			"$regex": "^" + interval,
-		},
-	}, bson.M{
-		"$set": bson.M{"historySynced": true},
-	})
-	return err
-}
-
-// IsHistorySynced 检查历史数据是否已同步完成
-func (col *Kline) IsHistorySynced(interval string) (bool, error) {
-	var doc KlineDocument
-	err := col.collection().FindOne(col.ctx, bson.M{
-		"interval": interval,
-		"_id": bson.M{
-			"$regex": "^" + interval,
-		},
-	}, options.FindOne().SetProjection(bson.M{"historySynced": 1})).Decode(&doc)
-
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return false, nil
-		}
-		return false, err
-	}
-
-	return doc.HistorySynced, nil
+	return nil
 }

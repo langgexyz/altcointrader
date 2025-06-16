@@ -121,3 +121,8 @@ func (s *baseKlineDocument0Field) TakerBuyQuoteVolume() *field.Float640F {
   return field.NewFloat640F(n)
 }
 
+func (s *baseKlineDocument0Field) IsOldest() *field.Bool0F {
+  n := field.StructNext(s.name, "IsOldest")
+  return field.NewBool0F(n)
+}
+

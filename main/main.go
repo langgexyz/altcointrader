@@ -39,7 +39,7 @@ func main() {
 	cmd.RegisterCmd("syncklines", "sync klines", func(args *arg.Arg) {
 		arg.ReadConfig(args)
 		args.Parse()
-		binance.SyncDailyKlines(context.Background(), "DOGEUSDT")
+		binance.Sync1DKline(context.Background(), "DOGEUSDT")
 	})
 	cmd.Run()
 }
