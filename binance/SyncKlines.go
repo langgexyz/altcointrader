@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/xpwu/go-log/log"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -18,8 +21,24 @@ const (
 
 // syncHistoricalKlines 同步历史数据
 func syncHistoricalKlines(ctx context.Context, klineDB *db.Kline, symbol string, logger *log.Logger) error {
-	// 从一年前开始同步
-	startTime := time.Now().AddDate(-1, 0, 0).UnixMilli()
+	// 获取已同步的最早数据
+	oldestKline, err := klineDB.GetOldestKline("1d")
+	if err != nil {
+		logger.Error("Failed to get oldest kline: " + err.Error())
+		return err
+	}
+
+	var startTime int64
+	if oldestKline == nil {
+		// 如果没有数据，从一年前开始同步
+		startTime = time.Now().AddDate(-1, 0, 0).UnixMilli()
+		logger.Info("No existing data found, will sync from one year ago")
+	} else {
+		// 从最早数据的前一天开始同步
+		startTime = oldestKline.OpenTime - 24*60*60*1000 // 减去一天的毫秒数
+		logger.Info(fmt.Sprintf("Found oldest kline at %d, will sync from %d", oldestKline.OpenTime, startTime))
+	}
+
 	endTime := time.Now().UnixMilli()
 	currentEndTime := endTime
 
@@ -58,6 +77,13 @@ func syncHistoricalKlines(ctx context.Context, klineDB *db.Kline, symbol string,
 
 		if len(klines) < defaultLimit {
 			if currentEndTime <= startTime {
+				// 标记最后一条数据为最早数据
+				if len(klines) > 0 {
+					if err := klineDB.UpdateOldestFlag("1d", klines[0].OpenTime); err != nil {
+						logger.Error("Failed to update oldest flag: " + err.Error())
+						return err
+					}
+				}
 				break
 			}
 			currentEndTime = klines[0].OpenTime - 1
@@ -68,30 +94,32 @@ func syncHistoricalKlines(ctx context.Context, klineDB *db.Kline, symbol string,
 		time.Sleep(time.Duration(requestInterval) * time.Millisecond)
 	}
 
-	// 标记历史数据同步完成
-	if err := klineDB.MarkHistorySynced("1d"); err != nil {
-		logger.Error("Failed to mark history as synced: " + err.Error())
-		return err
-	}
-
 	logger.Info(fmt.Sprintf("Historical sync completed, total synced: %d klines", totalSynced))
 	return nil
 }
 
 // syncIncrementalKlines 同步增量数据
 func syncIncrementalKlines(ctx context.Context, klineDB *db.Kline, symbol string, logger *log.Logger) error {
-	// 获取数据库中最新的K线数据
-	latestKline, err := klineDB.GetLatestKline("1d")
-	if err != nil {
-		logger.Error("Failed to get latest kline: " + err.Error())
-		return err
-	}
+	// 获取数据库中最新的K线数据（按OpenTime降序排序的第一条）
+	opts := options.FindOne().SetSort(bson.D{{"openTime", -1}})
+	var latestKline db.KlineDocument
+	err := klineDB.collection().FindOne(ctx, bson.M{
+		"interval": "1d",
+		"_id": bson.M{
+			"$regex": "^1d",
+		},
+	}, opts).Decode(&latestKline)
 
 	var startTime int64
-	if latestKline == nil {
-		// 如果没有数据，从今天开始
-		startTime = time.Now().Truncate(24 * time.Hour).UnixMilli()
-		logger.Info("No existing data found, will sync from today")
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			// 如果没有数据，从今天开始
+			startTime = time.Now().Truncate(24 * time.Hour).UnixMilli()
+			logger.Info("No existing data found, will sync from today")
+		} else {
+			logger.Error("Failed to get latest kline: " + err.Error())
+			return err
+		}
 	} else {
 		// 从最新数据的下一天开始同步
 		startTime = latestKline.CloseTime + 1
@@ -130,14 +158,6 @@ func syncIncrementalKlines(ctx context.Context, klineDB *db.Kline, symbol string
 		}
 	}
 
-	// 更新最新数据标记
-	if len(klines) > 0 {
-		if err := klineDB.UpdateLatestFlag("1d", klines[len(klines)-1].OpenTime); err != nil {
-			logger.Error("Failed to update latest flag: " + err.Error())
-			return err
-		}
-	}
-
 	logger.Info(fmt.Sprintf("Incremental sync completed, synced %d new klines", len(klines)))
 	return nil
 }
@@ -152,15 +172,15 @@ func SyncDailyKlines(ctx context.Context, symbol string) error {
 	// 创建数据库操作对象
 	klineDB := db.NewKline(ctx)
 
-	// 检查历史数据是否已同步完成
-	historySynced, err := klineDB.IsHistorySynced("1d")
+	// 检查是否有历史数据标记
+	oldestKline, err := klineDB.GetOldestKline("1d")
 	if err != nil {
-		logger.Error("Failed to check history sync status: " + err.Error())
+		logger.Error("Failed to check oldest kline: " + err.Error())
 		return err
 	}
 
-	// 如果历史数据未同步完成，先同步历史数据
-	if !historySynced {
+	// 如果没有历史数据标记，先同步历史数据
+	if oldestKline == nil {
 		logger.Info("Starting historical data sync")
 		if err := syncHistoricalKlines(ctx, klineDB, symbol, logger); err != nil {
 			return err

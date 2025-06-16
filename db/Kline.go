@@ -24,8 +24,7 @@ type KlineDocument struct {
 	TradeCount          int     // 成交笔数
 	TakerBuyBaseVolume  float64 // 主动买入成交量（基础币）
 	TakerBuyQuoteVolume float64 // 主动买入成交额（计价币）
-	IsLatest            bool    // 是否为最新数据
-	HistorySynced       bool    // 历史数据是否已同步完成
+	IsOldest            bool    // 是否为历史数据同步的最后一条数据
 }
 
 func (col *Kline) collection() *mongo.Collection {
@@ -52,17 +51,13 @@ func NewKline(ctx context.Context) *Kline {
 	}
 }
 
-// GetLatestKline 获取指定交易对和周期的最新K线数据
-func (col *Kline) GetLatestKline(interval string) (*KlineDocument, error) {
-	opts := options.FindOne().SetSort(bson.D{{"openTime", -1}})
-
+// GetOldestKline 获取指定交易对和周期的最早K线数据（IsOldest为true的数据）
+func (col *Kline) GetOldestKline(interval string) (*KlineDocument, error) {
 	var doc KlineDocument
 	err := col.collection().FindOne(col.ctx, bson.M{
 		"interval": interval,
-		"_id": bson.M{
-			"$regex": "^" + interval,
-		},
-	}, opts).Decode(&doc)
+		"isOldest": true,
+	}).Decode(&doc)
 
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -74,49 +69,27 @@ func (col *Kline) GetLatestKline(interval string) (*KlineDocument, error) {
 	return &doc, nil
 }
 
-// GetEarliestKline 获取指定交易对和周期的最早K线数据
-func (col *Kline) GetEarliestKline(interval string) (*KlineDocument, error) {
-	opts := options.FindOne().SetSort(bson.D{{"openTime", 1}})
-
-	var doc KlineDocument
-	err := col.collection().FindOne(col.ctx, bson.M{
-		"interval": interval,
-		"_id": bson.M{
-			"$regex": "^" + interval,
-		},
-	}, opts).Decode(&doc)
-
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	return &doc, nil
-}
-
-// UpdateLatestFlag 更新指定交易对和周期的最新数据标记
-func (col *Kline) UpdateLatestFlag(interval string, openTime int64) error {
-	// 先将所有数据标记为非最新
+// UpdateOldestFlag 更新指定交易对和周期的最早数据标记
+func (col *Kline) UpdateOldestFlag(interval string, openTime int64) error {
+	// 先将所有数据标记为非最早
 	_, err := col.collection().UpdateMany(col.ctx, bson.M{
 		"interval": interval,
 		"_id": bson.M{
 			"$regex": "^" + interval,
 		},
 	}, bson.M{
-		"$set": bson.M{"isLatest": false},
+		"$set": bson.M{"isOldest": false},
 	})
 	if err != nil {
 		return err
 	}
 
-	// 将指定数据标记为最新
+	// 将指定数据标记为最早
 	_, err = col.collection().UpdateOne(col.ctx, bson.M{
 		"interval": interval,
 		"openTime": openTime,
 	}, bson.M{
-		"$set": bson.M{"isLatest": true},
+		"$set": bson.M{"isOldest": true},
 	})
 	return err
 }
